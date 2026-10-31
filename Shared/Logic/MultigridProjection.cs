@@ -1225,7 +1225,20 @@ namespace MultigridProjector.Logic
             baseConnection.Block = baseBlock;
             try
             {
-                baseBlock.Attach(topConnection.Block);
+                // A piston whose subparts have not finished loading cannot attach yet:
+                // GetTopMatrixLocal dereferences Subpart3 and throws the NRE seen in the
+                // server log. Skip the attempt - the sanity check below closes the base
+                // grid and the connection is retried once the model is there.
+                var piston = baseBlock as MyPistonBase;
+                if (piston == null || piston.Subpart3 != null)
+                    baseBlock.Attach(topConnection.Block);
+            }
+            catch (NullReferenceException e)
+            {
+                // The same transient as below, but unwrapped: on Torch the patched Attach is
+                // called directly, so the NRE arrives without a TargetInvocationException
+                // around it and used to reach the error log on every multigrid piston weld.
+                PluginLog.Warn($"Ignored System.NullReferenceException in Attach called from BuildMissingBase: {e.Message}; projector.DebugName = \"{Projector.DebugName}\", baseSubgrid.Index = {baseSubgrid.Index}, baseBlock.Position = {baseBlock?.Position}, baseBlock.DebugName = \"{baseBlock?.DebugName}\"");
             }
             catch (TargetInvocationException e)
             {
@@ -1241,12 +1254,6 @@ System.NullReferenceException: Object reference not set to an instance of an obj
    at Sandbox.Game.Entities.Blocks.MyPistonBase.CreateConstraint(MyAttachableTopBlockBase topBlock)
    at Sandbox.Game.Entities.Blocks.MyPistonBase.Attach(MyAttachableTopBlockBase topBlock, Boolean updateGroup)
    --- End of inner exception stack trace ---
-   at System.RuntimeMethodHandle.InvokeMethod(Object target, Object[] arguments, Signature sig, Boolean constructor)
-   at System.Reflection.RuntimeMethodInfo.UnsafeInvokeInternal(Object obj, Object[] parameters, Object[] arguments)
-   at System.Reflection.RuntimeMethodInfo.Invoke(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
-   at System.Reflection.MethodBase.Invoke(Object obj, Object[] parameters)
-   at MultigridProjector.Extensions.MyMechanicalConnectionBlockBaseExtensions.Attach(MyMechanicalConnectionBlockBase obj, MyAttachableTopBlockBase topBlock, Boolean updateGroup) in C:\Dev\multigrid-projector\MultigridProjector\Extensions\MyMechanicalConnectionBlockBaseExtensions.cs:line 19
-   at MultigridProjector.Logic.MultigridProjection.BuildMissingBase(TopConnection topConnection, Subgrid topSubgrid) in C:\Dev\multigrid-projector\MultigridProjector\Logic\MultigridProjection.cs:line 925
                 */
                 if (!e.ToString().Contains("System.NullReferenceException"))
                     throw;
