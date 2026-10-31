@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net48</TargetFramework><OutputType>Exe</OutputType><PlatformTarget>x64</PlatformTarget><LangVersion>14</LangVersion><AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects></PropertyGroup>
+  <ItemGroup>
+    <Reference Include="Torch" HintPath="C:/SE/Torch.dll" Private="false" />
+    <Reference Include="NLog" HintPath="C:/SE/NLog.dll" Private="false" />
+    <Reference Include="Sandbox.Game" HintPath="C:/SE/DedicatedServer64/Sandbox.Game.dll" Private="false" />
+    <Reference Include="VRage.Math" HintPath="C:/SE/DedicatedServer64/VRage.Math.dll" Private="false" />
+    <Reference Include="VRage" HintPath="C:/SE/DedicatedServer64/VRage.dll" Private="false" />
+    <Reference Include="VRage.Game" HintPath="C:/SE/DedicatedServer64/VRage.Game.dll" Private="false" />
+    <PackageReference Include="Lib.Harmony" Version="2.4.2" />
+    <PackageReference Include="Mono.Cecil" Version="0.11.6" />
+  </ItemGroup>
+</Project>

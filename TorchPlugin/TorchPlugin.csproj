@@ -1,0 +1,60 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <AssemblyName>MultigridProjector</AssemblyName>
+    <LangVersion>14</LangVersion>
+    <PlatformTarget>x64</PlatformTarget>
+    <DefineConstants>$(DefineConstants);MAGNETAR;LOCAL_BUILD;TORCH_LOADER</DefineConstants>
+    <TorchBin Condition="'$(TorchBin)' == ''">C:/SE</TorchBin>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <PublicizerRuntimeStrategies>Unsafe;IgnoresAccessChecksTo</PublicizerRuntimeStrategies>
+    <PublicizerClearCacheOnClean>true</PublicizerClearCacheOnClean>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="TorchPlugin.cs" />
+    <Compile Include="TorchPatchBackend.cs" />
+    <!-- Keep Magnetar configuration, guards and all patches unchanged. Torch owns the
+         one session/update loop; do not also register the game session component. -->
+    <Compile Include="../ServerPlugin/**/*.cs"
+             Exclude="../ServerPlugin/obj/**/*.cs;../ServerPlugin/bin/**/*.cs;../ServerPlugin/PluginSession.cs;../ServerPlugin/Preloader.cs"
+             Link="ServerPlugin/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Reference Include="Torch" HintPath="$(TorchBin)/Torch.dll" Private="false" />
+    <Reference Include="Torch.API" HintPath="$(TorchBin)/Torch.API.dll" Private="false" />
+    <Reference Include="NLog" HintPath="$(TorchBin)/NLog.dll" Private="false" />
+    <Reference Include="PluginSdk" HintPath="$(MagnetarBinDir)PluginSdk.dll" Private="true" />
+    <GameReference Include="Sandbox.Common;Sandbox.Game;Sandbox.Graphics;SpaceEngineers.Game;SpaceEngineers.ObjectBuilders;VRage;VRage.Game;VRage.Library;VRage.Math;VRage.Network;VRage.Render;VRage.Render11;VRage.Input;VRage.Audio;VRage.Steam;VRage.NativeWrapper;HavokWrapper;ProtoBuf.Net;ProtoBuf.Net.Core;SixLabors.Core;SixLabors.ImageSharp" />
+    <Reference Include="@(GameReference)" HintPath="$(Dedicated64Dir)%(Identity).dll" Private="false" />
+    <None Include="manifest.xml" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Lib.Harmony" Version="2.4.2" />
+    <PackageReference Include="Mono.Cecil" Version="0.11.6" />
+    <!-- PluginSdk's XML storage initializes its JSON options too. Ship its real deps. -->
+    <PackageReference Include="System.Text.Json" Version="8.0.5" />
+    <PackageReference Include="Krafs.Publicizer" Version="2.3.0" PrivateAssets="all" />
+  </ItemGroup>
+  <ItemGroup>
+    <Publicize Include="Sandbox.Game" />
+    <Publicize Include="SpaceEngineers.Game" />
+    <DoNotPublicize Include="Sandbox.Game:Sandbox.Game.Entities.MyEntities.OnEntityAdd" />
+    <DoNotPublicize Include="Sandbox.Game:Sandbox.Game.Entities.MyEntities.OnEntityRemove" />
+    <DoNotPublicize Include="Sandbox.Game:Sandbox.Game.Entities.MyEntities.OnEntityCreate" />
+    <DoNotPublicize Include="Sandbox.Game:Sandbox.Game.Entities.MyCubeGrid.OnStaticChanged" />
+    <DoNotPublicize Include="Sandbox.Game:Sandbox.Game.Entities.MyCubeGrid.OnBlockAdded" />
+    <DoNotPublicize Include="Sandbox.Game:Sandbox.Game.Entities.MyCubeGrid.OnBlockRemoved" />
+    <DoNotPublicize Include="Sandbox.Game:Sandbox.Game.Entities.MyCubeGrid.OnBlockIntegrityChanged" />
+    <DoNotPublicize Include="Sandbox.Game:Sandbox.Game.Entities.MyCubeGrid.OnFatBlockAdded" />
+    <DoNotPublicize Include="Sandbox.Game:Sandbox.Game.Entities.MyCubeGrid.OnGridSplit" />
+    <DoNotPublicize Include="Sandbox.Game:Sandbox.Game.Entities.MyCubeGrid.OnGridMerge" />
+    <DoNotPublicize Include="Sandbox.Game:Sandbox.Game.Entities.MyCubeBlock.CheckConnectionChanged" />
+    <DoNotPublicize Include="Sandbox.Game:Sandbox.Game.Entities.Blocks.MyMechanicalConnectionBlockBase.OnAttachedChanged" />
+    <DoNotPublicize Include="Sandbox.Game:Sandbox.Game.Entities.Cube.MyTerminalBlock.PropertiesChanged" />
+  </ItemGroup>
+  <Target Name="ValidateTorchInputs" BeforeTargets="PrepareForBuild">
+    <Error Condition="!Exists('$(Dedicated64Dir)Sandbox.Game.dll')" Text="Set Dedicated64 to the server DedicatedServer64 folder." />
+    <Error Condition="!Exists('$(TorchBin)/Torch.dll')" Text="Set TorchBin to the Torch installation folder." />
+    <Error Condition="!Exists('$(MagnetarBinDir)PluginSdk.dll')" Text="Set MagnetarBin to the built real PluginSdk folder." />
+  </Target>
+  <Import Project="../Shared/Shared.projitems" Label="Shared" />
+  <Import Project="../MultigridProjectorApi/MultigridProjectorApi.projitems" Label="Shared" />
+</Project>

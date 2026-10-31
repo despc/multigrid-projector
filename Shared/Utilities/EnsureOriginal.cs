@@ -86,7 +86,13 @@ namespace MultigridProjector.Utilities
 
         private static int HashMethodBody(MethodInfo methodInfo)
         {
+#if TORCH_LOADER
+            // Read the managed vanilla body, never a Harmony-transformed instruction stream.
+            // Torch native detours leave MethodBody intact. Existing allowed hashes stay unchanged.
+            var code = PatchProcessor.GetOriginalInstructions(methodInfo);
+#else
             var code = PatchProcessor.GetCurrentInstructions(methodInfo);
+#endif
             return Arithmetic.CombineHashCodes(HashInstructions(code));
         }
 

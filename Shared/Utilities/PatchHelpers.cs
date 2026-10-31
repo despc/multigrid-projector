@@ -37,14 +37,22 @@ namespace MultigridProjector.Utilities
         // the dedicated server's early bootstrap, before world-load compilation.
         public static void PatchUncategorized(Harmony harmony)
         {
+#if TORCH_LOADER
+            ApplyAndLog(harmony, () => MultigridProjectorTorch.TorchPatchBackend.PatchHarmony(harmony, null), "uncategorized patches");
+#else
             ApplyAndLog(harmony, () => harmony.PatchAllUncategorized(Assembly.GetExecutingAssembly()), "uncategorized patches");
+#endif
         }
 
         // Applies only the patches in the given category. Used by the dedicated server from
         // IPlugin.Init, once the world/session has loaded and any late-loaded target assemblies exist.
         public static void PatchCategory(Harmony harmony, string category)
         {
+#if TORCH_LOADER
+            ApplyAndLog(harmony, () => MultigridProjectorTorch.TorchPatchBackend.PatchHarmony(harmony, category), $"category '{category}'");
+#else
             ApplyAndLog(harmony, () => harmony.PatchCategory(Assembly.GetExecutingAssembly(), category), $"category '{category}'");
+#endif
         }
 
         // Snapshot the methods this Harmony id has already patched, apply, then report exactly the
