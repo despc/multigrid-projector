@@ -264,15 +264,11 @@ namespace MultigridProjector.Logic
         {
             if (projectedBlock.State != BlockState.BeingBuilt && projectedBlock.State != BlockState.FullyBuilt)
             {
-                // TEMP[RestoreTrace]
-                PluginLog.Info($"[RestoreTrace] RestoreOneWay: skip {projectedBlock.Builder.GetType().Name} id={projectedBlock.Builder.EntityId} — state={projectedBlock.State} (not built)");
                 return;
             }
 
             if (!(projectedBlock.SlimBlock?.FatBlock is MyTerminalBlock terminalBlock) || terminalBlock.Closed || !terminalBlock.InScene)
             {
-                // TEMP[RestoreTrace]
-                PluginLog.Info($"[RestoreTrace] RestoreOneWay: skip {projectedBlock.Builder.GetType().Name} id={projectedBlock.Builder.EntityId} — no live fat block (slim={projectedBlock.SlimBlock != null}, fat={projectedBlock.SlimBlock?.FatBlock != null})");
                 return;
             }
 
@@ -317,8 +313,6 @@ namespace MultigridProjector.Logic
                     break;
             }
 
-            // TEMP[RestoreTrace]
-            PluginLog.Info($"[RestoreTrace] RestoreOneWay: {projectedBlock.Builder.GetType().Name} \"{terminalBlock.CustomName}\" id={terminalBlock.EntityId} modified={modified}");
 
             // Optimization: Raise properties changed only if there has been any modification
             if (modified)
