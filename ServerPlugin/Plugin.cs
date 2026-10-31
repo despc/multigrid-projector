@@ -150,8 +150,11 @@ public class Plugin : IPlugin
             // load), not the default that PluginConfig.Current holds until now.
             MultigridProjector.Config.PluginConfig.Current = config;
 
+#if !TORCH_LOADER
             var isOldDotNetFramework = Environment.Version.Major < 5;
             if (isOldDotNetFramework && !WineDetector.IsRunningInWineOrProton())
+#endif
+            // Torch always verifies vanilla IL, before installing native detours.
             {
                 try
                 {
@@ -167,6 +170,9 @@ public class Plugin : IPlugin
 
             // Apply the uncategorized patches now, before world-load compilation. Any patch carrying
             // the "Late" category is deferred to Init (currently none).
+#if TORCH_LOADER
+            MultigridProjectorTorch.TorchPatchBackend.Install();
+#endif
             PatchHelpers.PatchUncategorized(Harmony);
         }
         catch (Exception e)

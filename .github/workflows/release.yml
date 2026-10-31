@@ -1,0 +1,121 @@
+# A tag 1.2.3 (or v1.2.3) pushed to the repository builds the plugin and publishes a release with
+# MultigridProjector-Torch-<version>.zip:
+# the zip goes into Torch's Plugins folder as it is.
+#
+# The plugin is built against the libraries of Space Engineers Dedicated Server, Torch and Magnetar,
+# which are not in the repository (they are not ours to hand out): the job downloads the server with
+# SteamCMD (it is free to download without an account), Torch from its build server and Magnetar from
+# its GitHub release, keeps only the libraries, and caches them for a week.
+#
+# "Run workflow" on the Actions page builds the same zip without a release (it is left as the run's artifact).
+name: Release
+
+on:
+  push:
+    tags: ['[0-9]*.[0-9]*.[0-9]*', 'v[0-9]*.[0-9]*.[0-9]*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to stamp the build with (no release is made)
+        default: 0.0.0-manual
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  PLUGIN: MultigridProjector-Torch
+  SE_ROOT: ${{ github.workspace }}\.se
+  TORCH_ZIP: https://build.torchapi.com/job/Torch/job/master/lastSuccessfulBuild/artifact/bin/torch-server.zip
+  # Pinned: the build needs Libraries/MagnetarLegacy/PluginSdk.dll (the net48 reference)
+  MAGNETAR_ZIP: https://github.com/CometWorks/magnetar/releases/download/v2.4.3.8/MagnetarForWindows-2.4.3.8.7z
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      # C# 14 and the plugin's net10.0 target: the 8.0 SDK of the other repositories is too old here
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Week of the year (the game's libraries are fetched anew once a week)
+        id: week
+        shell: pwsh
+        run: '"week=$(Get-Date -UFormat %Y-%V)" >> $env:GITHUB_OUTPUT'
+
+      - name: Cached libraries of the game, Torch and Magnetar
+        id: libs
+        uses: actions/cache@v4
+        with:
+          path: .se
+          key: se-libs-mgp-${{ steps.week.outputs.week }}
+
+      - name: Download Space Engineers Dedicated Server, Torch and Magnetar
+        if: steps.libs.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ProgressPreference = 'SilentlyContinue'
+          $tmp = $env:RUNNER_TEMP
+          New-Item -ItemType Directory -Force "$tmp\steamcmd", "$tmp\ds", "$env:SE_ROOT\DedicatedServer64" | Out-Null
+          Invoke-WebRequest https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip -OutFile "$tmp\steamcmd.zip"
+          Expand-Archive "$tmp\steamcmd.zip" "$tmp\steamcmd" -Force
+          # SteamCMD updates itself on its first run and may end with an error code though the download went through:
+          # judged by what it left, tried up to three times
+          $game = "$tmp\ds\DedicatedServer64\Sandbox.Game.dll"
+          for ($try = 1; $try -le 3 -and -not (Test-Path $game); $try++) {
+            & "$tmp\steamcmd\steamcmd.exe" +force_install_dir "$tmp\ds" +login anonymous +app_update 298740 +quit
+            Write-Host "SteamCMD ended with $LASTEXITCODE (try $try)"
+          }
+          if (-not (Test-Path $game)) { throw 'The dedicated server was not downloaded' }
+          Copy-Item "$tmp\ds\DedicatedServer64\*.dll" "$env:SE_ROOT\DedicatedServer64"
+          Invoke-WebRequest $env:TORCH_ZIP -OutFile "$tmp\torch.zip"
+          Expand-Archive "$tmp\torch.zip" "$tmp\torch" -Force
+          Copy-Item "$tmp\torch\*.dll" $env:SE_ROOT
+          if (-not (Test-Path "$env:SE_ROOT\Torch.dll")) { throw 'Torch.dll is not in the Torch archive' }
+          # Magnetar ships PluginSdk.dll under Libraries/MagnetarLegacy (net48) and MagnetarInterim (net10.0)
+          Invoke-WebRequest $env:MAGNETAR_ZIP -OutFile "$tmp\magnetar.7z"
+          7z x "-o$tmp\magnetar" "$tmp\magnetar.7z" -y | Out-Null
+          if (-not (Test-Path "$tmp\magnetar\Magnetar\Libraries\MagnetarLegacy\PluginSdk.dll")) { throw 'PluginSdk.dll is not in the Magnetar archive' }
+          Copy-Item "$tmp\magnetar\Magnetar" "$env:SE_ROOT\Magnetar" -Recurse -Force
+          $global:LASTEXITCODE = 0
+
+      - name: Loader contracts
+        shell: pwsh
+        run: python TorchPlugin/tests/test_loader_contract.py
+
+      - name: Build the Magnetar server plugin (compile check of both target frameworks)
+        shell: pwsh
+        run: |
+          dotnet build ServerPlugin/ServerPlugin.csproj -c Release `
+            "-p:Dedicated64=$env:SE_ROOT\DedicatedServer64" "-p:Magnetar=$env:SE_ROOT\Magnetar" --nologo -v minimal
+          if ($LASTEXITCODE -ne 0) { throw "The Magnetar build failed ($LASTEXITCODE)" }
+
+      - name: Build and pack the Torch plugin
+        id: pack
+        shell: pwsh
+        run: ./tools/release.ps1 -Version "${{ github.event_name == 'push' && github.ref_name || inputs.version }}" -SeRoot "$env:SE_ROOT" -Magnetar "$env:SE_ROOT\Magnetar"
+
+      - name: The zip as the run's artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PLUGIN }}
+          path: ${{ steps.pack.outputs.zip }}
+          if-no-files-found: error
+
+      - name: Publish the release
+        if: github.event_name == 'push'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = '${{ github.ref_name }}'
+          $zip = '${{ steps.pack.outputs.zip }}'
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) { gh release upload $tag $zip --clobber }
+          else { gh release create $tag $zip --title "$env:PLUGIN $tag" --generate-notes --verify-tag }
+          if ($LASTEXITCODE -ne 0) { throw "The release was not published ($LASTEXITCODE)" }

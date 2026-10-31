@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PluginManifest xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <Name>Multigrid Projector (main core, Torch test loader)</Name>
+  <Guid>f3e38dc9-e964-49ab-a3bc-74716d5b7b23</Guid>
+  <Version>0.9.10</Version>
+  <Author>Multigrid Projector contributors</Author>
+  <Description>Unchanged main projection engine and server patches hosted by a thin Torch test loader. Not the upstream supported Magnetar installation.</Description>
+</PluginManifest>
