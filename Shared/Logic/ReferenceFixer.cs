@@ -676,10 +676,16 @@ namespace MultigridProjector.Logic
             var builder = (MyObjectBuilder_ButtonPanel)projectedBlock.Builder;
             var block = (MyButtonPanel)projectedBlock.SlimBlock.FatBlock;
 
+            // A panel without custom button names has CustomButtonNames == null in its object
+            // builder; dereferencing .Dictionary threw on every such restore.
+            var customNames = builder.CustomButtonNames?.Dictionary;
+            if (customNames == null)
+                return false;
+
             var modified = false;
-            foreach (var pos in builder.CustomButtonNames.Dictionary.Keys)
+            foreach (var pos in customNames.Keys)
             {
-                var customName = builder.CustomButtonNames[pos];
+                var customName = customNames[pos];
                 if (customName != null)
                 {
                     block.SetCustomButtonName(customName, pos);
