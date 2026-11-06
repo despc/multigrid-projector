@@ -62,7 +62,7 @@ namespace MultigridProjector.Extensions
             wm.Translation += referenceBlock.WorldMatrix.Translation;
 
             // Move the preview grid
-            block.CubeGrid.PositionComp.SetWorldMatrix(ref wm, skipTeleportCheck: true);
+            block.CubeGrid.PositionComp.SetWorldMatrixIfMoved(ref wm);
         }
 
         public static List<MyCubeGrid> GetFocusedGridsInMechanicalGroup(this MyCubeBlock focusedBlock)

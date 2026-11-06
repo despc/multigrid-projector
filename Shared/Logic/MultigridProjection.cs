@@ -821,7 +821,7 @@ namespace MultigridProjector.Logic
             var projectionOffset = worldMatrix.Translation - firstBlockWorldPosition;
             worldMatrix.Translation += projectionOffset;
             firstPreviewGrid.PositionComp.Scale = 1f;
-            firstPreviewGrid.PositionComp.SetWorldMatrix(ref worldMatrix, skipTeleportCheck: true);
+            firstPreviewGrid.PositionComp.SetWorldMatrixIfMoved(ref worldMatrix);
             subgrids[0].Positioned = true;
 
             // Further subgrids
@@ -876,7 +876,7 @@ namespace MultigridProjector.Logic
                             gridBuilder.PositionAndOrientation.Value.ToMatrixD(out var topMatrix);
                             baseSubgrid.GridBuilder.PositionAndOrientation.Value.ToMatrixD(out var baseMatrix);
                             var wm = topMatrix * MatrixD.Invert(baseMatrix) * baseSubgrid.PreviewGrid.PositionComp.WorldMatrixRef;
-                            subgrid.PreviewGrid.PositionComp.SetWorldMatrix(ref wm, skipTeleportCheck: true);
+                            subgrid.PreviewGrid.PositionComp.SetWorldMatrixIfMoved(ref wm);
                             subgrid.Positioned = true;
                             gridsToPosition--;
                             continue;
@@ -893,7 +893,7 @@ namespace MultigridProjector.Logic
                             gridBuilder.PositionAndOrientation.Value.ToMatrixD(out var topMatrix);
                             topSubgrid.GridBuilder.PositionAndOrientation.Value.ToMatrixD(out var baseMatrix);
                             var wm = topMatrix * MatrixD.Invert(baseMatrix) * topSubgrid.PreviewGrid.PositionComp.WorldMatrixRef;
-                            subgrid.PreviewGrid.PositionComp.SetWorldMatrix(ref wm, skipTeleportCheck: true);
+                            subgrid.PreviewGrid.PositionComp.SetWorldMatrixIfMoved(ref wm);
                             subgrid.Positioned = true;
                             gridsToPosition--;
                             // ReSharper disable once RedundantJumpStatement
