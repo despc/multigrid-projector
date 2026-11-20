@@ -1366,8 +1366,22 @@ System.NullReferenceException: Object reference not set to an instance of an obj
             if (!Initialized || Projector.Closed)
                 return;
 
-            // Allow welding only on the first subgrid if the client does not have the MGP plugin installed or an MGP unaware mod sends in a request
-            var subgridIndex = builtBy >= 0 && builtBy < GridCount ? (int)builtBy : 0;
+            var context = MyEventContext.Current;
+            var session = MySession.Static;
+            var encodedSubgrid = builtBy >= 0 && builtBy < GridCount;
+            var subgridIndex = encodedSubgrid ? (int)builtBy : 0;
+            var author = owner;
+            if (!context.IsLocallyInvoked)
+            {
+                var sender = session.Players.GetPlayerById(new MyPlayer.PlayerId(context.Sender.Value));
+                var character = sender?.Character;
+                if (character == null || character.IsDead || character.EntityId != builder || sender.Controller?.ControlledEntity != character)
+                    return;
+                author = sender.Identity.IdentityId;
+                // The wire field is either an MGP subgrid index or the vanilla caller's own identity.
+                if (author == 0 || (!encodedSubgrid && builtBy != author))
+                    return;
+            }
 
             // Find the subgrid to build on
             Subgrid subgrid;
@@ -1414,6 +1428,23 @@ System.NullReferenceException: Object reference not set to an instance of an obj
                     additionalInfo:
                     $"MultigridProjection.BuildInternal: previewCubeBlockPosition={previewCubeBlockPosition}; owner={owner}; builder={builder}; requestInstant={requestInstant}; builtBy={builtBy}; subgridIndex={subgridIndex}; previewBlock={previewBlock}; Projector.AllowWelding={Projector.AllowWelding}");
                 return;
+            }
+
+            var creativeTools = session.CreativeToolsEnabled(context.Sender.Value);
+            var instantBuild = requestInstant && creativeTools;
+            var definition = previewBlock.BlockDefinition;
+            var pcu = session.CreativeMode || instantBuild ? definition.PCU : MyCubeBlockDefinition.PCU_CONSTRUCTION_STAGE_COST;
+            if (session.IsWithinWorldLimits(out _, author, definition.GetLimitType(), pcu, 1, builtGrid.BlocksCount) != MySession.LimitResult.Passed)
+                return;
+
+            if (session.SurvivalMode && !instantBuild)
+            {
+                if (!MyEntities.TryGetEntityById(builder, out var entity) || !(entity is Sandbox.Game.Entities.Character.MyCharacter || entity is IMyShipWelder))
+                    return;
+                var inventory = MyCubeBuilder.BuildComponent.GetBuilderInventory(entity);
+                var components = definition.Components;
+                if (inventory == null || components == null || components.Length == 0 || inventory.GetItemAmount(components[0].Definition.Id) < 1)
+                    return;
             }
 
             // Transform from the preview grid's coordinates to the grid being build (they don't match exactly for the projecting grid)
@@ -1471,11 +1502,8 @@ System.NullReferenceException: Object reference not set to an instance of an obj
                 batteryBuilder.CurrentStoredPower = cubeBlockDefinition.InitialStoredPowerRatio * cubeBlockDefinition.MaxStoredPower;
             }
 
-            // Ownership is determined by the projector's grid, not by who is welding the block
-            blockBuilder.BuiltBy = owner;
-
-            // Instant build is active in creative mode, in survival blocks are built gradually
-            var instantBuild = requestInstant && MySession.Static.CreativeToolsEnabled(MyEventContext.Current.Sender.Value);
+            // Keep ownership separate from the identity charged for the build.
+            blockBuilder.BuiltBy = author;
             var component = MySession.Static.GetComponent<MySessionComponentGameInventory>();
             var steamId = MySession.Static.Players.TryGetSteamId(owner);
             var skinId = component?.ValidateItem(previewBlock.SkinSubtypeId, steamId) ?? MyStringHash.NullOrEmpty;
