@@ -63,5 +63,6 @@ internal static class BackendTests
             check(e.InnerException is NotSupportedException && e.InnerException.Message.Contains("expected 00000000"), "EnsureOriginal rejects a deliberately wrong hash (guard not bypassed)");
         }
         NativeTests.Run(assembly, check, patterns);
+        PistonTests.Run(assembly, check);
     }
 }

@@ -238,6 +238,10 @@ namespace MultigridProjector.Logic
 
             Initialized = false;
 
+            foreach (var pending in pendingPistons.Values)
+                pending.Discard();
+            pendingPistons.Clear();
+
             if (!Sync.IsDedicated)
             {
                 MyEntities.OnEntityAdd -= InvalidateVoxelCacheIfVoxelBaseEntity;
@@ -1161,14 +1165,88 @@ namespace MultigridProjector.Logic
             topConnection.Block = topConnection.Found;
         }
 
+        private readonly Dictionary<TopConnection, PendingPiston> pendingPistons = new Dictionary<TopConnection, PendingPiston>();
+
+        private sealed class PendingPiston
+        {
+            public readonly MyCubeGrid Grid;
+            public readonly MyPistonBase Piston;
+            public readonly MyAttachableTopBlockBase Head;
+            public readonly int Frame = MySession.Static.GameplayFrameCounter;
+            private readonly MatrixD relativeHead;
+            private readonly bool saved;
+            private readonly long owner;
+            private readonly float integrity;
+
+            public PendingPiston(MyCubeGrid grid, MyPistonBase piston, MyAttachableTopBlockBase head)
+            {
+                Grid = grid;
+                Piston = piston;
+                Head = head;
+                relativeHead = head.WorldMatrix * MatrixD.Invert(grid.WorldMatrix);
+                owner = piston.OwnerId;
+                integrity = piston.SlimBlock.Integrity;
+                saved = grid.Save;
+                grid.Save = false;
+            }
+
+            public bool IsPristine => !Grid.Closed && !Grid.MarkedForClose && !Piston.Closed && !Piston.MarkedForClose &&
+                ReferenceEquals(Piston.CubeGrid, Grid) && Grid.BlocksCount == 1 &&
+                Piston.OwnerId == owner && Piston.SlimBlock.Integrity == integrity;
+
+            public bool HeadStayedInPlace()
+            {
+                var now = Head.WorldMatrix * MatrixD.Invert(Grid.WorldMatrix);
+                return Vector3D.DistanceSquared(now.Translation, relativeHead.Translation) <= 0.25 * 0.25 &&
+                    Vector3D.Dot(now.Forward, relativeHead.Forward) >= 0.999 && Vector3D.Dot(now.Up, relativeHead.Up) >= 0.999;
+            }
+
+            public void RestoreSave()
+            {
+                if (!Grid.Closed && !Grid.MarkedForClose) Grid.Save = saved;
+            }
+
+            public void Discard()
+            {
+                RestoreSave();
+                // Do not delete a grid that a player has modified or attached in the meantime.
+                if (IsPristine && Piston.TopBlock == null) Grid.Close();
+            }
+        }
+
         private void BuildMissingBase(TopConnection topConnection, Subgrid topSubgrid)
         {
-            if (!Sync.IsServer || !topConnection.HasBuilt || topConnection.Block.Stator != null)
+            if (!Sync.IsServer)
                 return;
 
-            // Create base of right size
             var baseConnection = GetCounterparty(topConnection, out var baseSubgrid);
-            if (baseSubgrid.HasBuilt)
+            if (pendingPistons.TryGetValue(topConnection, out var pending))
+            {
+                var sameHead = topConnection.HasBuilt && !pending.Head.MarkedForClose && ReferenceEquals(pending.Head, topConnection.Block);
+                var attached = sameHead && ReferenceEquals(pending.Piston.TopBlock, pending.Head) && ReferenceEquals(pending.Head.Stator, pending.Piston);
+                if (baseSubgrid.HasBuilt || !sameHead || !pending.IsPristine ||
+                    (!attached && (pending.Piston.TopBlock != null || pending.Head.Stator != null || !pending.HeadStayedInPlace())) ||
+                    MySession.Static.GameplayFrameCounter - pending.Frame >= 120)
+                {
+                    pendingPistons.Remove(topConnection);
+                    pending.Discard();
+                    ShouldUpdateProjection();
+                    return;
+                }
+
+                if (pending.Piston.Subpart3 == null)
+                {
+                    ForceUpdateProjection();
+                    return;
+                }
+
+                pendingPistons.Remove(topConnection);
+                pending.RestoreSave();
+                FinishMissingBase(pending.Grid, pending.Piston, baseConnection, baseSubgrid, topConnection, topSubgrid, attached);
+                return;
+            }
+
+            if (!topConnection.HasBuilt || topConnection.Block.MarkedForClose || topConnection.Block.Stator != null || baseSubgrid.HasBuilt)
                 return;
 
             // Create base grid builder
@@ -1218,19 +1296,32 @@ namespace MultigridProjector.Logic
                 return;
             MyEntities.Add(baseGrid);
 
-            // Attach the existing top part to the newly created base
             var baseBlock = baseGrid.CubeBlocks.First().FatBlock as MyMechanicalConnectionBlockBase;
+            if (baseBlock == null)
+            {
+                baseGrid.Close();
+                return;
+            }
+            // UpdateOnceBeforeFrame loads the model; closing the grid here prevents it from ever running.
+            if (baseBlock is MyPistonBase piston && piston.Subpart3 == null)
+            {
+                pendingPistons.Add(topConnection, new PendingPiston(baseGrid, piston, topConnection.Block));
+                ForceUpdateProjection();
+                return;
+            }
+
+            FinishMissingBase(baseGrid, baseBlock, baseConnection, baseSubgrid, topConnection, topSubgrid, false);
+        }
+
+        private void FinishMissingBase(MyCubeGrid baseGrid, MyMechanicalConnectionBlockBase baseBlock,
+            BaseConnection baseConnection, Subgrid baseSubgrid, TopConnection topConnection, Subgrid topSubgrid, bool alreadyAttached)
+        {
             baseSubgrid.AddBlockToGroups(baseBlock);
             baseConnection.Found = baseBlock;
             baseConnection.Block = baseBlock;
             try
             {
-                // A piston whose subparts have not finished loading cannot attach yet:
-                // GetTopMatrixLocal dereferences Subpart3 and throws the NRE seen in the
-                // server log. Skip the attempt - the sanity check below closes the base
-                // grid and the connection is retried once the model is there.
-                var piston = baseBlock as MyPistonBase;
-                if (piston == null || piston.Subpart3 != null)
+                if (!alreadyAttached)
                     baseBlock.Attach(topConnection.Block);
             }
             catch (NullReferenceException e)
@@ -1293,8 +1384,11 @@ System.NullReferenceException: Object reference not set to an instance of an obj
             if (!baseSubgrid.HasBuilt)
             {
                 var loneBasePart = !baseConnection.IsWheel && baseConnection.Block.CubeGrid.CubeBlocks.Count == 1;
-                if (loneBasePart)
-                    ConfigureBaseToMatchTop(baseConnection);
+                if (loneBasePart && !TryAlignMechanicalPart(baseConnection, topConnection, alignTop: false))
+                {
+                    ShouldUpdateProjection();
+                    return;
+                }
 
                 baseSubgrid.RegisterBuiltGrid(baseConnection.Block.CubeGrid);
                 baseSubgrid.ConfigureBuiltGrid();
@@ -1304,10 +1398,10 @@ System.NullReferenceException: Object reference not set to an instance of an obj
             if (!topSubgrid.HasBuilt)
             {
                 var loneTopPart = !topConnection.IsWheel && topConnection.Block.CubeGrid.CubeBlocks.Count == 1;
-                if (loneTopPart)
+                if (loneTopPart && !TryAlignMechanicalPart(baseConnection, topConnection, alignTop: true))
                 {
-                    topConnection.Block.AlignGrid(topConnection.Preview);
-                    ConfigureBaseToMatchTop(baseConnection);
+                    ShouldUpdateProjection();
+                    return;
                 }
 
                 topSubgrid.RegisterBuiltGrid(topConnection.Block.CubeGrid);
@@ -1316,20 +1410,45 @@ System.NullReferenceException: Object reference not set to an instance of an obj
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static void ConfigureBaseToMatchTop(BaseConnection baseConnection)
+        private static bool TryAlignMechanicalPart(BaseConnection baseConnection, TopConnection topConnection, bool alignTop)
         {
-            switch (baseConnection.Block)
-            {
-                case MyPistonBase pistonBase:
-                    pistonBase.SetCurrentPosByTopGridMatrix();
-                    break;
+            var baseBlock = baseConnection.Block;
+            var head = topConnection.Block;
+            var piston = baseBlock as MyPistonBase;
+            // A scan can find both parts before attachment or before the model's piston subparts are ready.
+            if (piston != null && !PistonReadyToAlign(piston, head))
+                return false;
 
-                case MyMotorStator motorStator:
-                    motorStator.SetAngleToPhysics();
-                    motorStator.SetValueFloat("Displacement", ((MyMotorStator)baseConnection.Preview).DummyDisplacement);
-                    break;
+            if (alignTop)
+                head.AlignGrid(topConnection.Preview);
+
+            if (piston != null)
+            {
+                if (alignTop && !PistonReadyToAlign(piston, head))
+                    return false;
+                try
+                {
+                    piston.SetCurrentPosByTopGridMatrix();
+                }
+                catch (NullReferenceException) when (!PistonReadyToAlign(piston, head))
+                {
+                    // The connection went away during the game's update. Retry on the next scan.
+                    return false;
+                }
             }
+            else if (baseBlock is MyMotorStator motorStator)
+            {
+                motorStator.SetAngleToPhysics();
+                motorStator.SetValueFloat("Displacement", ((MyMotorStator)baseConnection.Preview).DummyDisplacement);
+            }
+            return true;
         }
+
+        private static bool PistonReadyToAlign(MyPistonBase piston, MyAttachableTopBlockBase head) =>
+            head != null && !piston.Closed && !piston.MarkedForClose && !head.Closed && !head.MarkedForClose &&
+            ReferenceEquals(piston.TopBlock, head) && ReferenceEquals(head.Stator, piston) &&
+            piston.Subpart3 != null && piston.PositionComp != null && head.PositionComp != null &&
+            piston.CubeGrid?.PositionComp != null && head.CubeGrid?.PositionComp != null;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void UpdateAfterSimulation()
@@ -1940,7 +2059,7 @@ System.NullReferenceException: Object reference not set to an instance of an obj
                     foreach (var baseConnection in subgrid.BaseConnections.Values)
                     {
                         var topConnection = GetCounterparty(baseConnection, out var topSubgrid);
-                        if (topSubgrid.IsConnectedToProjector)
+                        if (topSubgrid.IsConnectedToProjector || !topSubgrid.HasBuilt)
                             continue;
 
                         if (!IsConnected(baseConnection, topConnection))
@@ -1967,7 +2086,7 @@ System.NullReferenceException: Object reference not set to an instance of an obj
                     foreach (var topConnection in subgrid.TopConnections.Values)
                     {
                         var baseConnection = GetCounterparty(topConnection, out var baseSubgrid);
-                        if (baseSubgrid.IsConnectedToProjector)
+                        if (baseSubgrid.IsConnectedToProjector || !baseSubgrid.HasBuilt)
                             continue;
 
                         if (!IsConnected(baseConnection, topConnection))
